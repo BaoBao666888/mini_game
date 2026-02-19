@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>One-Line Puzzle Solver</title>
+    <meta name="description" content="Tạo bản đồ lưới, chọn điểm bắt đầu và xem thuật toán tìm đường đi bao phủ toàn bộ bản đồ.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1 class="app-title">
+                <span class="title-icon">🧩</span>
+                One-Line Puzzle
+                <span class="title-badge">Solver</span>
+            </h1>
+            <p class="app-subtitle">Tìm đường đi bao phủ toàn bộ bản đồ — chỉ một đường duy nhất</p>
+        </header>
+
+        <main class="main-content">
+            <!-- Controls Panel -->
+            <aside class="controls-panel">
+                <div class="panel-section">
+                    <h2 class="section-title">
+                        <span class="section-icon">⚙️</span>
+                        Cấu hình bản đồ
+                    </h2>
+                    <div class="control-group">
+                        <label for="rows">Số hàng</label>
+                        <div class="input-row">
+                            <button class="btn-step" data-target="rows" data-step="-1">−</button>
+                            <input type="number" id="rows" min="2" max="10" value="5">
+                            <button class="btn-step" data-target="rows" data-step="1">+</button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label for="cols">Số cột</label>
+                        <div class="input-row">
+                            <button class="btn-step" data-target="cols" data-step="-1">−</button>
+                            <input type="number" id="cols" min="2" max="10" value="5">
+                            <button class="btn-step" data-target="cols" data-step="1">+</button>
+                        </div>
+                    </div>
+                    <button id="btn-create" class="btn btn-primary">
+                        <span>🗺️</span> Tạo bản đồ
+                    </button>
+                </div>
+
+                <div class="panel-section">
+                    <h2 class="section-title">
+                        <span class="section-icon">🎨</span>
+                        Chế độ chỉnh sửa
+                    </h2>
+                    <div class="mode-selector">
+                        <button class="mode-btn active" data-mode="obstacle" id="mode-obstacle">
+                            <span class="mode-icon">🚧</span>
+                            <span class="mode-label">Đặt chướng ngại</span>
+                        </button>
+                        <button class="mode-btn" data-mode="start" id="mode-start">
+                            <span class="mode-icon">📍</span>
+                            <span class="mode-label">Chọn điểm bắt đầu</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h2 class="section-title">
+                        <span class="section-icon">⚡</span>
+                        Tốc độ animation
+                    </h2>
+                    <div class="control-group">
+                        <input type="range" id="speed" min="10" max="500" value="120" class="speed-slider">
+                        <div class="speed-labels">
+                            <span>Nhanh</span>
+                            <span id="speed-value">120ms</span>
+                            <span>Chậm</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section actions-section">
+                    <button id="btn-solve" class="btn btn-accent" disabled>
+                        <span>▶️</span> Giải bản đồ
+                    </button>
+                    <button id="btn-reset" class="btn btn-secondary">
+                        <span>🔄</span> Reset
+                    </button>
+                </div>
+
+                <!-- Status -->
+                <div class="panel-section">
+                    <div id="status-box" class="status-box">
+                        <div class="status-icon">💡</div>
+                        <div class="status-text">Tạo bản đồ, đặt chướng ngại vật, chọn điểm bắt đầu rồi nhấn <strong>Giải</strong>!</div>
+                    </div>
+                </div>
+
+                <!-- Stats -->
+                <div class="panel-section stats-section" id="stats-section" style="display:none;">
+                    <h2 class="section-title">
+                        <span class="section-icon">📊</span>
+                        Thống kê
+                    </h2>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-value" id="stat-cells">0</span>
+                            <span class="stat-label">Ô đi qua</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="stat-time">0</span>
+                            <span class="stat-label">Thời gian (ms)</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Grid Area -->
+            <section class="grid-area">
+                <div id="grid-container" class="grid-container">
+                    <div class="grid-placeholder">
+                        <div class="placeholder-icon">🧩</div>
+                        <p>Tạo bản đồ để bắt đầu</p>
+                    </div>
+                </div>
+                <!-- SVG overlay for drawing path lines -->
+                <svg id="path-svg" class="path-svg"></svg>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
