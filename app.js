@@ -16,6 +16,8 @@
         editMode: 'obstacle', // 'obstacle' | 'start'
         solving: false,
         solved: false,
+        solverCancelled: false,
+        solverTimer: null,
         path: [],           // [{ r, c }, ...]
         animationTimer: null,
     };
@@ -172,12 +174,13 @@
         return gridContainer.querySelector(`[data-row="${r}"][data-col="${c}"]`);
     }
 
-    // ============ Solver ============
+    // ============ Solver (Async Chunked) ============
     function startSolve() {
         if (state.solving || !state.startPos) return;
 
         state.solving = true;
         state.solved = false;
+        state.solverCancelled = false;
         state.path = [];
 
         // Disable interactions
@@ -189,18 +192,21 @@
         clearPathVisuals();
         clearPathSvg();
 
-        setStatus('solving', '⏳', 'Đang tìm đường đi...');
+        setStatus('solving', '⏳', 'Đang tìm đường đi... (nhấn <strong>Reset</strong> để hủy)');
 
-        // Run solver in next tick to allow UI update
-        setTimeout(() => {
-            const t0 = performance.now();
-            const solution = solve();
+        // Start async solver
+        const t0 = performance.now();
+        solveAsync((result, reason) => {
             const elapsed = Math.round(performance.now() - t0);
 
-            if (solution) {
-                state.path = solution;
+            if (reason === 'solved' && result) {
+                state.path = result;
                 setStatus('solving', '✨', `Tìm thấy lời giải! Đang vẽ animation... (${elapsed}ms)`);
-                animatePath(solution, elapsed);
+                animatePath(result, elapsed);
+            } else if (reason === 'cancelled') {
+                state.solving = false;
+                setStatus('info', '🛑', 'Đã hủy tìm đường. Bạn có thể chỉnh bản đồ và thử lại.');
+                enableInteractions();
             } else {
                 state.solving = false;
                 setStatus('error', '❌', 'Không tìm thấy đường đi! Thử thay đổi bản đồ hoặc vị trí bắt đầu.');
@@ -210,11 +216,12 @@
                 });
                 enableInteractions();
             }
-        }, 50);
+        });
     }
 
-    function solve() {
+    function solveAsync(callback) {
         const { rows, cols, grid, startPos } = state;
+        const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
         // Count walkable cells
         let totalWalkable = 0;
@@ -229,59 +236,193 @@
         visited[startPos.r][startPos.c] = true;
 
         const path = [{ r: startPos.r, c: startPos.c }];
-        const directions = [
-            [-1, 0], [1, 0], [0, -1], [0, 1]  // up, down, left, right
-        ];
+
+        // Helper: check if cell is valid unvisited walkable
+        function isOpen(r, c) {
+            return r >= 0 && r < rows && c >= 0 && c < cols &&
+                !visited[r][c] && grid[r][c] === 0;
+        }
 
         function countMoves(r, c) {
             let count = 0;
             for (const [dr, dc] of directions) {
-                const nr = r + dr;
-                const nc = c + dc;
-                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols &&
-                    !visited[nr][nc] && grid[nr][nc] === 0) {
-                    count++;
+                if (isOpen(r + dr, c + dc)) count++;
+            }
+            return count;
+        }
+
+        // ---- PRUNING: Connectivity check via flood fill ----
+        // After visiting a cell, check if remaining unvisited cells are still connected.
+        // If they split into >1 group, this branch is a dead end → prune.
+        const floodVisited = Array.from({ length: rows }, () => Array(cols).fill(false));
+
+        function countConnected(sr, sc) {
+            // BFS flood fill from (sr,sc) among unvisited walkable cells
+            let count = 0;
+            const queue = [[sr, sc]];
+            floodVisited[sr][sc] = true;
+            while (queue.length > 0) {
+                const [cr, cc] = queue.pop();
+                count++;
+                for (const [dr, dc] of directions) {
+                    const nr = cr + dr, nc = cc + dc;
+                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols &&
+                        !floodVisited[nr][nc] && !visited[nr][nc] && grid[nr][nc] === 0) {
+                        floodVisited[nr][nc] = true;
+                        queue.push([nr, nc]);
+                    }
                 }
             }
             return count;
         }
 
-        function backtrack() {
-            if (path.length === totalWalkable) return true;
+        function isStillConnected() {
+            const remaining = totalWalkable - path.length;
+            if (remaining <= 1) return true; // 0 or 1 cell always "connected"
 
-            const { r, c } = path[path.length - 1];
-
-            // Warnsdorff: sort neighbors by number of onward moves (ascending)
-            const neighbors = [];
-            for (const [dr, dc] of directions) {
-                const nr = r + dr;
-                const nc = c + dc;
-                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols &&
-                    !visited[nr][nc] && grid[nr][nc] === 0) {
-                    neighbors.push({ r: nr, c: nc, deg: countMoves(nr, nc) });
+            // Reset flood visited
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    floodVisited[r][c] = false;
                 }
             }
 
-            // Sort by degree (Warnsdorff heuristic)
-            neighbors.sort((a, b) => a.deg - b.deg);
-
-            for (const next of neighbors) {
-                visited[next.r][next.c] = true;
-                path.push({ r: next.r, c: next.c });
-
-                if (backtrack()) return true;
-
-                path.pop();
-                visited[next.r][next.c] = false;
+            // Find first unvisited walkable cell
+            let startR = -1, startC = -1;
+            outer:
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (!visited[r][c] && grid[r][c] === 0) {
+                        startR = r; startC = c;
+                        break outer;
+                    }
+                }
             }
+            if (startR === -1) return true;
 
+            const connected = countConnected(startR, startC);
+            return connected === remaining;
+        }
+
+        // ---- PRUNING: Dead-end detection ----
+        // If any unvisited cell has 0 neighbors → impossible (unless it's the only one left)
+        // If an unvisited cell has exactly 1 neighbor and that cell is NOT adjacent to current pos
+        // and there are still >1 remaining cells, it creates a forced dead-end
+        function hasDeadEnd() {
+            const remaining = totalWalkable - path.length;
+            if (remaining <= 1) return false;
+
+            const cur = path[path.length - 1];
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (visited[r][c] || grid[r][c] !== 0) continue;
+                    const moves = countMoves(r, c);
+                    if (moves === 0 && remaining > 1) return true;
+                    // If cell has 1 move and is NOT adjacent to current → forced dead-end
+                    // (it must be visited next, but we can't reach it next)
+                    if (moves === 1 && remaining > 1) {
+                        const isAdjacentToCurrent = Math.abs(r - cur.r) + Math.abs(c - cur.c) === 1;
+                        if (!isAdjacentToCurrent) {
+                            // Check: is there only one such forced cell? If 2+ forced cells exist,
+                            // we can only visit one next → dead end
+                            // Actually even 1 forced cell that's not adjacent is fine IF
+                            // it can be reached later. But if it has just 1 exit, it must be
+                            // approached from that exit, which constrains the path.
+                            // For simplicity, only prune if 0-move cells exist.
+                        }
+                    }
+                }
+            }
             return false;
         }
 
-        if (backtrack()) {
-            return [...path];
+        function getNeighborsSorted(r, c) {
+            const neighbors = [];
+            for (const [dr, dc] of directions) {
+                const nr = r + dr, nc = c + dc;
+                if (isOpen(nr, nc)) {
+                    neighbors.push({ r: nr, c: nc, deg: countMoves(nr, nc) });
+                }
+            }
+            neighbors.sort((a, b) => a.deg - b.deg);
+            return neighbors;
         }
-        return null;
+
+        // Iterative backtracking with explicit stack
+        const stack = [];
+        const initNeighbors = getNeighborsSorted(startPos.r, startPos.c);
+        stack.push({ neighbors: initNeighbors, index: 0 });
+
+        let totalSteps = 0;
+        const CHUNK_SIZE = 10000;
+        const startTime = performance.now();
+
+        function processChunk() {
+            if (state.solverCancelled) {
+                callback(null, 'cancelled');
+                return;
+            }
+
+            const chunkEnd = totalSteps + CHUNK_SIZE;
+
+            while (totalSteps < chunkEnd) {
+                totalSteps++;
+
+                // Found solution?
+                if (path.length === totalWalkable) {
+                    callback([...path], 'solved');
+                    return;
+                }
+
+                // Stack empty = exhausted
+                if (stack.length === 0) {
+                    callback(null, 'no_solution');
+                    return;
+                }
+
+                const frame = stack[stack.length - 1];
+
+                if (frame.index >= frame.neighbors.length) {
+                    // Backtrack
+                    stack.pop();
+                    const removed = path.pop();
+                    if (removed) visited[removed.r][removed.c] = false;
+                    continue;
+                }
+
+                // Try next neighbor
+                const next = frame.neighbors[frame.index];
+                frame.index++;
+
+                visited[next.r][next.c] = true;
+                path.push({ r: next.r, c: next.c });
+
+                // ---- PRUNING CHECK ----
+                // Check dead-ends and connectivity BEFORE pushing neighbors
+                if (hasDeadEnd() || !isStillConnected()) {
+                    // This move leads to dead end, undo and try next neighbor
+                    path.pop();
+                    visited[next.r][next.c] = false;
+                    continue;
+                }
+
+                // Push new frame
+                const nextNeighbors = getNeighborsSorted(next.r, next.c);
+                stack.push({ neighbors: nextNeighbors, index: 0 });
+            }
+
+            // Update status with progress
+            const elapsed = Math.round(performance.now() - startTime);
+            setStatus('solving', '⏳',
+                `Đang tìm... <strong>${(totalSteps / 1000).toFixed(0)}k</strong> bước | ${(elapsed / 1000).toFixed(1)}s (nhấn <strong>Reset</strong> để hủy)`);
+
+            // Yield to browser, then continue
+            state.solverTimer = setTimeout(processChunk, 0);
+        }
+
+        // Start first chunk
+        state.solverTimer = setTimeout(processChunk, 0);
     }
 
     // ============ Animation ============
@@ -401,6 +542,13 @@
 
     // ============ Reset ============
     function resetGrid() {
+        // Cancel solver if running
+        if (state.solverTimer) {
+            clearTimeout(state.solverTimer);
+            state.solverTimer = null;
+        }
+        state.solverCancelled = true;
+
         if (state.animationTimer) {
             clearTimeout(state.animationTimer);
             state.animationTimer = null;
